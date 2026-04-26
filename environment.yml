@@ -1,0 +1,12 @@
+name: chatbot
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Python interpreter required by this project.
+  - python=3.12
+
+  # Pip is used to install the package list documented in requirements.txt.
+  - pip
+  - pip:
+      - -r requirements.txt
