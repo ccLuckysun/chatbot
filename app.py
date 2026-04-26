@@ -27,6 +27,8 @@ HTML_PAGE = r"""<!doctype html>
       --muted: #667085;
       --accent: #1769e0;
       --accent-soft: #e8f1ff;
+      --ok: #087443;
+      --bad: #9b1c1c;
       --warn: #8a4b00;
       --warn-bg: #fff4dc;
     }
@@ -40,7 +42,7 @@ HTML_PAGE = r"""<!doctype html>
     }
     .app {
       display: grid;
-      grid-template-columns: 280px minmax(0, 1fr);
+      grid-template-columns: 300px minmax(0, 1fr);
       min-height: 100vh;
     }
     aside {
@@ -56,7 +58,7 @@ HTML_PAGE = r"""<!doctype html>
     }
     header {
       border-bottom: 1px solid var(--line);
-      background: rgba(255, 255, 255, 0.86);
+      background: rgba(255, 255, 255, 0.88);
       padding: 20px 28px;
     }
     h1, h2, p { margin: 0; }
@@ -76,6 +78,37 @@ HTML_PAGE = r"""<!doctype html>
     }
     .label { color: var(--muted); font-size: 12px; }
     .value { font-weight: 700; margin-top: 4px; }
+    .components {
+      display: grid;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .component {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 7px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .component:last-child { border-bottom: 0; }
+    .badge {
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .badge.ok {
+      background: #e7f6ef;
+      color: var(--ok);
+    }
+    .badge.bad {
+      background: #fdecec;
+      color: var(--bad);
+    }
     .warning {
       display: none;
       margin-top: 14px;
@@ -192,15 +225,20 @@ HTML_PAGE = r"""<!doctype html>
           <div class="label">文档切片</div>
           <div class="value" id="chunks">0</div>
         </div>
+        <div class="status-item">
+          <div class="label">向量索引</div>
+          <div class="value" id="vectors">0</div>
+        </div>
       </div>
+      <div class="components" id="components"></div>
       <div class="warning" id="warning"></div>
       <button class="secondary" id="rebuild" type="button">重建知识库索引</button>
-      <p class="hint">把 .txt 或 .md 文件放入 data/documents 后，点击重建知识库索引即可检索新内容。</p>
+      <p class="hint">把 .txt 或 .md 文件放入 data/documents 后，点击重建知识库索引即可重新生成向量库。</p>
     </aside>
     <main>
       <header>
         <h1>RAG ChatBot</h1>
-        <p class="subtitle">基于本地知识库检索上下文，再生成带来源的回答。</p>
+        <p class="subtitle">先用 Embedding 检索 ChromaDB 中的知识库上下文，再交给 LLM 生成带来源的回答。</p>
       </header>
       <section id="messages"></section>
       <form id="chat-form">
@@ -215,6 +253,14 @@ HTML_PAGE = r"""<!doctype html>
     const promptInput = document.querySelector("#prompt");
     const sendButton = document.querySelector("#send");
     const rebuildButton = document.querySelector("#rebuild");
+    const componentLabels = {
+      documents: "文档切片",
+      embedding_model: "Embedding 模型",
+      vector_database: "向量数据库",
+      retriever: "检索器",
+      context_builder: "上下文构建",
+      llm: "LLM"
+    };
 
     function appendMessage(role, text, sources = []) {
       const wrapper = document.createElement("div");
@@ -243,11 +289,31 @@ HTML_PAGE = r"""<!doctype html>
       messages.scrollTop = messages.scrollHeight;
     }
 
+    function renderComponents(components) {
+      const container = document.querySelector("#components");
+      container.textContent = "";
+      Object.entries(componentLabels).forEach(([key, label]) => {
+        const row = document.createElement("div");
+        row.className = "component";
+        const name = document.createElement("span");
+        name.textContent = label;
+        const badge = document.createElement("span");
+        const enabled = Boolean(components && components[key]);
+        badge.className = `badge ${enabled ? "ok" : "bad"}`;
+        badge.textContent = enabled ? "已就绪" : "未就绪";
+        row.appendChild(name);
+        row.appendChild(badge);
+        container.appendChild(row);
+      });
+    }
+
     async function refreshStatus() {
       const response = await fetch("/api/status");
       const status = await response.json();
       document.querySelector("#mode").textContent = status.mode;
       document.querySelector("#chunks").textContent = status.chunk_count;
+      document.querySelector("#vectors").textContent = status.vector_count;
+      renderComponents(status.components || {});
       const warning = document.querySelector("#warning");
       if (status.warning) {
         warning.style.display = "block";
@@ -286,13 +352,20 @@ HTML_PAGE = r"""<!doctype html>
     rebuildButton.addEventListener("click", async () => {
       rebuildButton.disabled = true;
       rebuildButton.textContent = "重建中";
-      await fetch("/api/rebuild", {method: "POST"});
-      await refreshStatus();
-      rebuildButton.disabled = false;
-      rebuildButton.textContent = "重建知识库索引";
+      try {
+        const response = await fetch("/api/rebuild", {method: "POST"});
+        const data = await response.json();
+        if (!response.ok) {
+          appendMessage("assistant", data.error || "重建索引失败。");
+        }
+      } finally {
+        await refreshStatus();
+        rebuildButton.disabled = false;
+        rebuildButton.textContent = "重建知识库索引";
+      }
     });
 
-    appendMessage("assistant", "你好，我是一个基于知识库的 RAG ChatBot。你可以问我关于这个项目、RAG 流程或部署方式的问题。");
+    appendMessage("assistant", "你好，我是一个基于知识库的 RAG ChatBot。你可以问我关于项目、RAG 流程或 data/documents 中资料的问题。");
     refreshStatus();
   </script>
 </body>
@@ -336,7 +409,14 @@ class ChatbotHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/rebuild":
-            retriever.rebuild_index()
+            try:
+                retriever.rebuild_index()
+            except Exception as exc:
+                self._send_json(
+                    {"error": f"重建索引失败：{exc}", **status_payload()},
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+                return
             self._send_json(status_payload())
             return
 
@@ -374,10 +454,20 @@ class ChatbotHandler(BaseHTTPRequestHandler):
 
 
 def status_payload() -> dict:
+    warning = retriever.startup_warning
+    try:
+        vector_count = retriever.vector_count
+    except Exception as exc:
+        vector_count = 0
+        status_warning = f"向量库状态读取失败：{exc}"
+        warning = f"{warning}\n{status_warning}" if warning else status_warning
+
     return {
         "mode": retriever.mode_label,
         "chunk_count": retriever.chunk_count,
-        "warning": retriever.startup_warning,
+        "vector_count": vector_count,
+        "components": retriever.components,
+        "warning": warning,
     }
 
 
