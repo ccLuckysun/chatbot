@@ -21,7 +21,9 @@ class LocalSearchEngine:
 
         query_terms = Counter(tokenize(query))
         if not query_terms:
-            return self._format_results([(0.0, index) for index in range(min(top_k, len(self.chunks)))])
+            return self._format_results(
+                [(0.0, index) for index in range(min(top_k, len(self.chunks)))]
+            )
 
         scored: list[tuple[float, int]] = []
         for index, terms in enumerate(self.chunk_terms):
@@ -38,13 +40,16 @@ class LocalSearchEngine:
     def answer(self, query: str, top_k: int) -> tuple[str, list[dict]]:
         sources = self.search(query, top_k)
         if not sources:
-            return "知识库里还没有可检索的文档。请先把 .txt 或 .md 文件放入 data/documents。", []
+            return (
+                "知识库里还没有可检索的文档。请先把 .txt 或 .md 文件放入 data/documents。",
+                [],
+            )
 
         bullets = "\n".join(f"- {source['text'][:260].strip()}" for source in sources)
         answer = (
-            "当前未完整配置 API_KEY、API_URL、MODEL_NAME，已使用本地兜底检索模式回答。\n\n"
+            "当前没有完整配置 LLM 与 Embedding API，已使用本地关键词检索兜底模式回答。\n\n"
             f"根据知识库中最相关的内容，可以参考：\n{bullets}\n\n"
-            "如需更自然的生成式回答，请在 .env 中配置外部 API 后重启应用。"
+            "如需完整 RAG 能力，请在 .env 中配置 LLM_* 与 EMBEDDING_* 后重启应用。"
         )
         return answer, sources
 
@@ -70,6 +75,7 @@ class LocalSearchEngine:
             results.append(
                 {
                     "source": chunk.metadata["source"],
+                    "chunk_index": chunk.metadata.get("chunk_index"),
                     "text": chunk.text,
                     "score": round(score / best_score, 3),
                 }

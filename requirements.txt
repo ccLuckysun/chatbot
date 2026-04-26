@@ -1,87 +1,11 @@
 # Python package dependencies for the RAG ChatBot project.
-# Required Python interpreter:
-#   Python 3.12.x
-#
-# requirements.txt installs Python packages only; it cannot install Python itself.
-# If you use Conda, create the interpreter first with:
-#   conda create -n chatbot python=3.12 -y
-#
-# Then install everything with:
-#   python -m pip install -r requirements.txt
-#
-# The comments below are kept intentionally detailed so the file is readable
-# when reviewing the project before installing dependencies.
+# Required Python interpreter: Python 3.12.x
 
-
-# -----------------------------------------------------------------------------
-# Web UI
-# -----------------------------------------------------------------------------
-# Streamlit provides the planned interactive chatbot web interface:
-# chat messages, input box, sidebar status, expanders, and quick local demos.
-streamlit>=1.35.0,<2.0.0
-
-
-# -----------------------------------------------------------------------------
-# External LLM API and embeddings
-# -----------------------------------------------------------------------------
-# Official OpenAI Python SDK.
-# Many providers expose OpenAI-compatible APIs, so this package is useful even
-# when the backend model is not ChatGPT/OpenAI. The current app can call an
-# external compatible endpoint with API_KEY, API_URL, and MODEL_NAME.
+# OpenAI-compatible LLM and Embedding API client.
 openai>=1.68.0,<3.0.0
 
-# Tokenizer utility commonly used with OpenAI-compatible model workflows.
-# Useful for counting tokens before sending long contexts to the model.
-tiktoken>=0.7.0,<1.0.0
+# Local persistent vector database.
+chromadb>=1.0.0,<2.0.0
 
-
-# -----------------------------------------------------------------------------
-# Agent and RAG orchestration
-# -----------------------------------------------------------------------------
-# LangGraph is the planned agent workflow framework in chatbot.txt.
-# It can model multi-step flows such as retrieve -> grade -> answer -> retry.
-langgraph>=0.2.0,<1.0.0
-
-# LangChain core abstractions for prompts, documents, retrievers, and chains.
-# Included because LangGraph projects commonly use LangChain document/tool types.
-langchain>=0.3.0,<1.0.0
-
-# LangChain integration package for OpenAI-compatible chat models and embeddings.
-langchain-openai>=0.2.0,<1.0.0
-
-
-# -----------------------------------------------------------------------------
-# Vector database
-# -----------------------------------------------------------------------------
-# ChromaDB stores document embeddings and performs vector similarity search.
-# This is the vector database named in chatbot.txt.
-chromadb>=0.5.0,<2.0.0
-
-
-# -----------------------------------------------------------------------------
-# Data processing and visualization
-# -----------------------------------------------------------------------------
-# Pandas is used for tabular data loading, cleaning, inspection, and summaries.
-pandas>=2.2.0,<4.0.0
-
-# Matplotlib provides basic static charts for analysis or debugging.
-matplotlib>=3.8.0,<4.0.0
-
-# Plotly provides interactive charts that can be embedded in Streamlit.
-plotly>=5.22.0,<7.0.0
-
-
-# -----------------------------------------------------------------------------
-# Console / notebook compatibility
-# -----------------------------------------------------------------------------
-# wcwidth is required by prompt-toolkit, which is commonly present when using
-# IPython/Jupyter or Conda-based interactive environments. Listing it explicitly
-# keeps `python -m pip check` clean after one-click installation.
-wcwidth>=0.2.13,<0.3.0
-
-
-# -----------------------------------------------------------------------------
-# Environment configuration
-# -----------------------------------------------------------------------------
-# Loads local secrets and settings from .env, such as API_KEY.
+# Loads local secrets and settings from .env.
 python-dotenv>=1.0.1,<2.0.0

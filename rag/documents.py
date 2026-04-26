@@ -49,6 +49,9 @@ def split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     if not text:
         return []
 
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0.")
+
     if len(text) <= chunk_size:
         return [text]
 

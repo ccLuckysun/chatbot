@@ -3,10 +3,10 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # Python interpreter required by this project.
+  # 项目推荐使用 Python 3.12。
   - python=3.12
 
-  # Pip is used to install the package list documented in requirements.txt.
+  # Python 包依赖统一由 requirements.txt 管理。
   - pip
   - pip:
       - -r requirements.txt
