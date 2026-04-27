@@ -1,121 +1,113 @@
 from __future__ import annotations
 
+import gc
 from pathlib import Path
-from typing import Any
 
-import chromadb
-
-from rag.documents import DocumentChunk
+from chromadb.api.client import SharedSystemClient
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 
 
 class VectorStore:
-    def __init__(self, persist_dir: Path, collection_name: str) -> None:
+    def __init__(
+        self,
+        persist_dir: Path,
+        collection_name: str,
+        embedding_function: Embeddings,
+    ) -> None:
         persist_dir.mkdir(parents=True, exist_ok=True)
+        self.persist_dir = persist_dir
         self.collection_name = collection_name
-        self.client = chromadb.PersistentClient(path=str(persist_dir))
-        self.collection = self._get_or_create_collection()
+        self.embedding_function = embedding_function
+        self.store = self._create_store()
+        self.client = self.store._client
 
     def count(self) -> int:
         try:
-            return int(self.collection.count())
+            return int(self.store._collection.count())
         except Exception as exc:
             if not _is_missing_collection_error(exc):
                 raise
-            self.collection = self._get_or_create_collection()
-            return int(self.collection.count())
+            self.store = self._create_store()
+            self.client = self.store._client
+            return int(self.store._collection.count())
 
     def reset(self) -> None:
         try:
-            self.collection = self._get_or_create_collection()
-            existing = self.collection.get(include=[])
+            existing = self.store.get(include=[])
             ids = existing.get("ids", [])
             if ids:
-                self.collection.delete(ids=ids)
+                self.store.delete(ids=ids)
         except Exception as exc:
             if not _is_missing_collection_error(exc):
                 raise
-            self.collection = self._get_or_create_collection()
+            self.store = self._create_store()
+            self.client = self.store._client
 
     def close(self) -> None:
         close = getattr(self.client, "close", None)
         if callable(close):
             close()
+        self.store = None
+        self.client = None
+        SharedSystemClient.clear_system_cache()
+        gc.collect()
 
-    def upsert_chunks(
-        self,
-        chunks: list[DocumentChunk],
-        embeddings: list[list[float]],
-    ) -> None:
-        if not chunks:
+    def upsert_documents(self, documents: list[Document]) -> None:
+        if not documents:
             return
-        if len(chunks) != len(embeddings):
-            raise ValueError("chunks and embeddings must have the same length.")
+
+        ids = [str(document.metadata.get("id") or "") for document in documents]
+        if not all(ids):
+            raise ValueError("Every document must include metadata['id'].")
 
         try:
-            self.collection.upsert(
-                ids=[chunk.id for chunk in chunks],
-                documents=[chunk.text for chunk in chunks],
-                metadatas=[chunk.metadata for chunk in chunks],
-                embeddings=embeddings,
-            )
+            self.store.add_documents(documents=documents, ids=ids)
         except Exception as exc:
             if not _is_missing_collection_error(exc):
                 raise
-            self.collection = self._get_or_create_collection()
-            self.collection.upsert(
-                ids=[chunk.id for chunk in chunks],
-                documents=[chunk.text for chunk in chunks],
-                metadatas=[chunk.metadata for chunk in chunks],
-                embeddings=embeddings,
-            )
+            self.store = self._create_store()
+            self.client = self.store._client
+            self.store.add_documents(documents=documents, ids=ids)
 
-    def query(self, query_embedding: list[float], top_k: int) -> list[dict]:
+    def query(self, query: str, top_k: int) -> list[dict]:
         if self.count() == 0:
             return []
 
         try:
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=max(1, top_k),
-                include=["documents", "metadatas", "distances"],
-            )
+            results = self.store.similarity_search_with_score(query, k=max(1, top_k))
         except Exception as exc:
             if not _is_missing_collection_error(exc):
                 raise
-            self.collection = self._get_or_create_collection()
+            self.store = self._create_store()
+            self.client = self.store._client
             return []
 
-        documents = _first(results.get("documents"))
-        metadatas = _first(results.get("metadatas"))
-        distances = _first(results.get("distances"))
+        return documents_with_scores_to_sources(results)
 
-        sources: list[dict] = []
-        for document, metadata, distance in zip(documents, metadatas, distances):
-            metadata = metadata or {}
-            score = _distance_to_score(distance)
-            sources.append(
-                {
-                    "source": metadata.get("source", "unknown"),
-                    "chunk_index": metadata.get("chunk_index"),
-                    "text": document or "",
-                    "score": score,
-                }
-            )
-
-        return sources
-
-    def _get_or_create_collection(self) -> Any:
-        return self.client.get_or_create_collection(
-            name=self.collection_name,
-            metadata={"hnsw:space": "cosine"},
+    def _create_store(self) -> Chroma:
+        return Chroma(
+            collection_name=self.collection_name,
+            embedding_function=self.embedding_function,
+            persist_directory=str(self.persist_dir),
+            collection_metadata={"hnsw:space": "cosine"},
         )
 
 
-def _first(value: Any) -> list:
-    if isinstance(value, list) and value:
-        first = value[0]
-        return first if isinstance(first, list) else []
-    return []
+def documents_with_scores_to_sources(results: list[tuple[Document, float]]) -> list[dict]:
+    sources: list[dict] = []
+    for document, distance in results:
+        metadata = document.metadata or {}
+        sources.append(
+            {
+                "source": metadata.get("source", "unknown"),
+                "chunk_index": metadata.get("chunk_index"),
+                "text": document.page_content or "",
+                "score": _distance_to_score(distance),
+            }
+        )
+    return sources
 
 
 def _distance_to_score(distance: float | int | None) -> float:

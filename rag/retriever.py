@@ -3,11 +3,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+
 from rag.config import Settings
 from rag.context_builder import build_context
-from rag.documents import DocumentChunk, load_document_chunks
-from rag.embeddings import EmbeddingGenerator
-from rag.llm import LLMClient
+from rag.documents import load_document_chunks
+from rag.embeddings import create_embeddings
+from rag.llm import create_chat_model
 from rag.local_search import LocalSearchEngine
 from rag.vector_store import VectorStore
 
@@ -26,10 +29,11 @@ class RAGRetriever:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.startup_warning: str | None = None
-        self.chunks: list[DocumentChunk] = []
+        self.chunks = []
         self.local_engine = LocalSearchEngine([])
-        self.embedding_generator: EmbeddingGenerator | None = None
-        self.llm_client: LLMClient | None = None
+        self.embedding_model = None
+        self.llm_client = None
+        self.rag_chain = None
         self.vector_store: VectorStore | None = None
         self.mode = "local"
 
@@ -101,12 +105,12 @@ class RAGRetriever:
             return
 
         try:
-            self.embedding_generator = EmbeddingGenerator(
+            self.embedding_model = create_embeddings(
                 api_key=self.settings.embedding_api_key or "",
                 base_url=self.settings.embedding_base_url or "",
                 model=self.settings.embedding_model or "",
             )
-            self.llm_client = LLMClient(
+            self.llm_client = create_chat_model(
                 api_key=self.settings.llm_api_key or "",
                 base_url=self.settings.llm_base_url or "",
                 model=self.settings.llm_model or "",
@@ -114,7 +118,9 @@ class RAGRetriever:
             self.vector_store = VectorStore(
                 persist_dir=self.settings.vector_store_dir,
                 collection_name=self.settings.collection_name,
+                embedding_function=self.embedding_model,
             )
+            self.rag_chain = _create_rag_chain(self.llm_client)
             self.mode = "rag"
             self._rebuild_vector_index()
         except Exception as exc:
@@ -123,7 +129,7 @@ class RAGRetriever:
             self.mode = "local"
 
     def _rebuild_vector_index(self) -> None:
-        if not self.embedding_generator or not self.vector_store:
+        if not self.vector_store:
             raise RuntimeError("RAG runtime is not initialized.")
 
         self.vector_store.reset()
@@ -131,28 +137,38 @@ class RAGRetriever:
             self.startup_warning = "知识库暂无文档。请把 .txt 或 .md 文件放入 data/documents 后重建索引。"
             return
 
-        texts = [chunk.text for chunk in self.chunks]
-        embeddings = self.embedding_generator.generate_many(texts)
-        self.vector_store.upsert_chunks(self.chunks, embeddings)
+        self.vector_store.upsert_documents(self.chunks)
         if self.startup_warning and "知识库暂无文档" in self.startup_warning:
             self.startup_warning = None
 
     def _answer_with_rag(self, query: str) -> RAGResult:
-        if not self.embedding_generator or not self.vector_store or not self.llm_client:
+        if not self.vector_store or not self.rag_chain:
             raise RuntimeError("RAG runtime is not initialized.")
 
-        query_embedding = self.embedding_generator.generate(query)
-        sources = self.vector_store.query(query_embedding, self.settings.top_k)
+        sources = self.vector_store.query(query, self.settings.top_k)
         context = build_context(sources, self.settings.max_context_chars)
-
-        system_prompt = (
-            "你是一个严谨的中文 RAG 问答助手。只能基于给定的知识库上下文回答。"
-            "如果上下文不足以回答，请明确说明不知道，并建议用户补充知识库文档。"
-            "回答要简洁、准确，并尽量引用来源名称。"
+        answer = self.rag_chain.invoke(
+            {
+                "query": query,
+                "context": context or "暂无可用上下文。",
+            }
         )
-        user_prompt = (
-            f"问题：{query}\n\n"
-            f"知识库上下文：\n{context or '暂无可用上下文。'}"
-        )
-        answer = self.llm_client.generate(system_prompt, user_prompt)
         return RAGResult(answer=answer, sources=sources, mode="rag")
+
+
+def _create_rag_chain(llm_client):
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "你是一个严谨的中文 RAG 问答助手。只能基于给定的知识库上下文回答。"
+                "如果上下文不足以回答，请明确说明不知道，并建议用户补充知识库文档。"
+                "回答要简洁、准确，并尽量引用来源名称。",
+            ),
+            (
+                "human",
+                "问题：{query}\n\n知识库上下文：\n{context}",
+            ),
+        ]
+    )
+    return prompt | llm_client | StrOutputParser()

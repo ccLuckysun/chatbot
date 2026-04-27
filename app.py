@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from rag.config import Settings
 from rag.logging_config import configure_logging
@@ -376,81 +376,48 @@ HTML_PAGE = r"""<!doctype html>
 settings = Settings.from_env()
 configure_logging(settings.log_file)
 retriever = RAGRetriever(settings)
+app = FastAPI(title="RAG ChatBot")
 
 
-class ChatbotHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        path = urlparse(self.path).path
-        if path == "/":
-            self._send_html(HTML_PAGE)
-            return
-        if path == "/api/status":
-            self._send_json(status_payload())
-            return
-        self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return HTML_PAGE
 
-    def do_POST(self) -> None:
-        path = urlparse(self.path).path
-        if path == "/api/chat":
-            payload = self._read_json()
-            message = str(payload.get("message", "")).strip()
-            if not message:
-                self._send_json({"error": "message is required"}, HTTPStatus.BAD_REQUEST)
-                return
 
-            result = retriever.answer(message)
-            self._send_json(
-                {
-                    "answer": result.answer,
-                    "sources": result.sources,
-                    "mode": result.mode,
-                }
-            )
-            return
+@app.get("/api/status")
+def api_status() -> dict:
+    return status_payload()
 
-        if path == "/api/rebuild":
-            try:
-                retriever.rebuild_index()
-            except Exception as exc:
-                self._send_json(
-                    {"error": f"重建索引失败：{exc}", **status_payload()},
-                    HTTPStatus.INTERNAL_SERVER_ERROR,
-                )
-                return
-            self._send_json(status_payload())
-            return
 
-        self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+@app.post("/api/chat")
+async def api_chat(request: Request):
+    try:
+        payload = await request.json()
+    except ValueError:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    message = str(payload.get("message", "")).strip()
+    if not message:
+        return JSONResponse({"error": "message is required"}, status_code=400)
 
-    def log_message(self, format: str, *args: object) -> None:
-        return
+    result = retriever.answer(message)
+    return {
+        "answer": result.answer,
+        "sources": result.sources,
+        "mode": result.mode,
+    }
 
-    def _read_json(self) -> dict:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length <= 0:
-            return {}
-        raw_body = self.rfile.read(content_length).decode("utf-8")
-        try:
-            payload = json.loads(raw_body)
-        except json.JSONDecodeError:
-            return {}
-        return payload if isinstance(payload, dict) else {}
 
-    def _send_html(self, content: str, status: HTTPStatus = HTTPStatus.OK) -> None:
-        body = content.encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+@app.post("/api/rebuild")
+def api_rebuild():
+    try:
+        retriever.rebuild_index()
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"重建索引失败：{exc}", **status_payload()},
+            status_code=500,
+        )
+    return status_payload()
 
 
 def status_payload() -> dict:
@@ -474,10 +441,9 @@ def status_payload() -> dict:
 def main() -> None:
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    server = ThreadingHTTPServer((host, port), ChatbotHandler)
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
     print(f"RAG ChatBot running at http://{display_host}:{port}")
-    server.serve_forever()
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

@@ -4,30 +4,49 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag.documents import DocumentChunk
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
 from rag.vector_store import VectorStore
+
+
+class TinyEmbeddings(Embeddings):
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed(text)
+
+    @staticmethod
+    def _embed(text: str) -> list[float]:
+        normalized = text.lower()
+        if "alpha" in normalized:
+            return [1.0, 0.0]
+        if "beta" in normalized:
+            return [0.0, 1.0]
+        return [0.5, 0.5]
 
 
 class VectorStoreTests(unittest.TestCase):
     def test_upsert_query_and_reset(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            store = VectorStore(Path(directory), "test_docs")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store = VectorStore(Path(directory), "test_docs", TinyEmbeddings())
             try:
-                chunks = [
-                    DocumentChunk(
+                documents = [
+                    Document(
                         id="a",
-                        text="alpha document",
-                        metadata={"source": "a.md", "chunk_index": 0},
+                        page_content="alpha document",
+                        metadata={"id": "a", "source": "a.md", "chunk_index": 0},
                     ),
-                    DocumentChunk(
+                    Document(
                         id="b",
-                        text="beta document",
-                        metadata={"source": "b.md", "chunk_index": 0},
+                        page_content="beta document",
+                        metadata={"id": "b", "source": "b.md", "chunk_index": 0},
                     ),
                 ]
 
-                store.upsert_chunks(chunks, [[1.0, 0.0], [0.0, 1.0]])
-                results = store.query([1.0, 0.0], top_k=1)
+                store.upsert_documents(documents)
+                results = store.query("alpha query", top_k=1)
 
                 self.assertEqual(store.count(), 2)
                 self.assertEqual(results[0]["source"], "a.md")
@@ -40,32 +59,30 @@ class VectorStoreTests(unittest.TestCase):
                 store.close()
 
     def test_count_recovers_when_collection_was_deleted_elsewhere(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            store = VectorStore(Path(directory), "test_docs")
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store = VectorStore(Path(directory), "test_docs", TinyEmbeddings())
             try:
-                store.upsert_chunks(
+                store.upsert_documents(
                     [
-                        DocumentChunk(
+                        Document(
                             id="a",
-                            text="alpha document",
-                            metadata={"source": "a.md", "chunk_index": 0},
+                            page_content="alpha document",
+                            metadata={"id": "a", "source": "a.md", "chunk_index": 0},
                         )
-                    ],
-                    [[1.0, 0.0]],
+                    ]
                 )
                 store.client.delete_collection("test_docs")
 
                 self.assertEqual(store.count(), 0)
 
-                store.upsert_chunks(
+                store.upsert_documents(
                     [
-                        DocumentChunk(
+                        Document(
                             id="b",
-                            text="beta document",
-                            metadata={"source": "b.md", "chunk_index": 0},
+                            page_content="beta document",
+                            metadata={"id": "b", "source": "b.md", "chunk_index": 0},
                         )
-                    ],
-                    [[0.0, 1.0]],
+                    ]
                 )
                 self.assertEqual(store.count(), 1)
             finally:

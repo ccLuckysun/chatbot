@@ -4,6 +4,16 @@
 # OpenAI-compatible LLM and Embedding API client.
 openai>=1.68.0,<3.0.0
 
+# FastAPI web server and ASGI runner.
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+
+# LangChain standard RAG components.
+langchain>=1.0.0,<2.0.0
+langchain-openai>=1.0.0,<2.0.0
+langchain-chroma>=1.0.0,<2.0.0
+langchain-text-splitters>=1.0.0,<2.0.0
+
 # Local persistent vector database.
 chromadb>=1.0.0,<2.0.0
 

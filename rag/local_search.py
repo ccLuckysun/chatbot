@@ -4,16 +4,16 @@ import math
 import re
 from collections import Counter
 
-from rag.documents import DocumentChunk
+from langchain_core.documents import Document
 
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]")
 
 
 class LocalSearchEngine:
-    def __init__(self, chunks: list[DocumentChunk]) -> None:
+    def __init__(self, chunks: list[Document]) -> None:
         self.chunks = chunks
-        self.chunk_terms = [Counter(tokenize(chunk.text)) for chunk in chunks]
+        self.chunk_terms = [Counter(tokenize(chunk.page_content)) for chunk in chunks]
 
     def search(self, query: str, top_k: int) -> list[dict]:
         if not self.chunks:
@@ -27,7 +27,7 @@ class LocalSearchEngine:
 
         scored: list[tuple[float, int]] = []
         for index, terms in enumerate(self.chunk_terms):
-            score = self._score(query, query_terms, terms, self.chunks[index].text)
+            score = self._score(query, query_terms, terms, self.chunks[index].page_content)
             if score > 0:
                 scored.append((score, index))
 
@@ -76,7 +76,7 @@ class LocalSearchEngine:
                 {
                     "source": chunk.metadata["source"],
                     "chunk_index": chunk.metadata.get("chunk_index"),
-                    "text": chunk.text,
+                    "text": chunk.page_content,
                     "score": round(score / best_score, 3),
                 }
             )
