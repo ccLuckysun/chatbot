@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+from langchain_core.documents import Document
 
-def build_context(sources: list[dict], max_chars: int) -> str:
+
+def build_context(sources: list[dict] | list[tuple[Document, float]], max_chars: int) -> str:
+    sources = normalize_sources(sources)
     if not sources:
         return ""
 
@@ -34,3 +38,28 @@ def build_context(sources: list[dict], max_chars: int) -> str:
         used_chars += len(piece)
 
     return separator.join(pieces)
+
+
+def normalize_sources(sources: Iterable[dict] | Iterable[tuple[Document, float]]) -> list[dict]:
+    normalized: list[dict] = []
+    for source in sources:
+        if isinstance(source, tuple) and source and isinstance(source[0], Document):
+            document, score = source
+            metadata = document.metadata or {}
+            normalized.append(
+                {
+                    "source": metadata.get("source", "unknown"),
+                    "chunk_index": metadata.get("chunk_index"),
+                    "text": document.page_content or "",
+                    "score": score,
+                }
+            )
+            continue
+
+        if isinstance(source, dict):
+            normalized.append(source)
+            continue
+
+        continue
+
+    return normalized
